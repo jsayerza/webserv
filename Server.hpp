@@ -21,6 +21,9 @@ private:
     void readFromClient(int fd);   // recv() -> Leer y guardar bytes
     void sendToClient(int fd);     // send() -> Envía la respuesta de Sayer
 
+    ServerConfig getServerConfig(int port); //Buscar en tu vector _configs la que coincida con el puerto
+    std::string  getRawRequest(int client_fd); //Devuelve el contenido de _clientBuffers[client_fd]
+
 public:
         Server();                                   // 1. Constructor por defecto
         Server(const std::vector<ServerConfig> &configs); //constructor con config
