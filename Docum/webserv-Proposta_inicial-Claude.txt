@@ -1,0 +1,248 @@
+# Proyecto 42 Webserv
+
+## ¿Qué es el proyecto?
+Webserv es un servidor HTTP básico en C++98. Debes implementar tu propio servidor web capaz de:
+- Servir páginas estáticas
+- Manejar métodos GET, POST, DELETE
+- Ejecutar CGI (principalmente para scripts PHP o Python)
+- Gestionar múltiples conexiones simultáneas (I/O multiplexing con `poll`, `select` o `epoll`)
+- Parsear archivos de configuración (tipo Nginx)
+- Manejar timeouts y errores HTTP
+
+## ¿Es buena la división servidor/backend/frontend?
+**No es la mejor división para este proyecto**. En webserv, el "backend" y el "servidor" son básicamente lo mismo: todo es C++ manejando sockets y HTTP. El "frontend" es mínimo (solo HTML/CSS de prueba).
+
+## División recomendada (3 partes paralelas)
+### **Persona 2: Parsing y Configuración**
+- Parser del archivo de configuración
+- Estructura de datos para almacenar la config (servidores virtuales, rutas, límites)
+- Validación de la configuración
+- **Entregable**: Sistema que lee config y crea estructuras listas para usar
+
+### **Persona 1: Sockets y Conexiones**
+- Setup de sockets (listening sockets)
+- Implementación de multiplexing (`poll`/`select`/`epoll`)
+- Gestión de conexiones (accept, read, write)
+- Timeouts y cierre de conexiones
+- **Entregable**: Servidor que acepta conexiones y lee datos raw
+
+### **Persona 3: HTTP y Respuestas**
+- Parser de requests HTTP (método, headers, body)
+- Generación de responses HTTP (status codes, headers, body)
+- Manejo de métodos (GET para archivos estáticos, POST, DELETE)
+- Páginas de error
+- **Entregable**: Funciones que convierten requests en responses
+
+## Punto de integración
+Después de 1-2 semanas, integráis las 3 partes:
+- Config → inicializa los sockets
+- Sockets → reciben datos y los pasan al parser HTTP
+- HTTP → genera responses que los sockets envían
+
+Luego implementáis juntos CGI y features avanzadas.
+
+---------------------------------------------------
+
+
+# Desglose detallado por persona
+
+## **Persona 2: Parsing y Configuración**
+
+### Trabajo a realizar
+- Diseñar la estructura del archivo de configuración (inspirado en Nginx)
+- Implementar un lexer/parser que lea el archivo línea a línea
+- Crear clases C++ para almacenar: servidores virtuales, puertos, rutas, límites de body, páginas de error, configuración CGI
+- Validar que no haya duplicados, puertos inválidos, rutas inexistentes
+- Crear sistema de logging básico para debug
+
+### Herramientas y lenguajes
+- **C++98**: Todo el parsing (clases `ConfigParser`, `ServerConfig`, `LocationConfig`)
+- **Bash**: Scripts para testear diferentes configs válidas/inválidas
+- Posible uso de mapas/vectores STL para almacenar datos
+
+### Tiempo estimado
+- **Estudio inicial**: 4-6 horas (entender formato Nginx, diseñar estructura)
+- **Implementación**: 12-16 horas (lexer, parser, validación)
+- **Testing**: 4-6 horas (casos edge, configs complejas)
+- **Total**: 20-28 horas (~3-4 jornadas completas)
+
+---
+
+## **Persona 1: Sockets y Conexiones**
+
+### Trabajo a realizar
+- Crear sockets TCP en modo non-blocking
+- Implementar multiplexing (elegir entre `poll`, `select` o `epoll`)
+- Gestionar el ciclo: accept → read → write → close
+- Implementar timeouts (detectar conexiones inactivas)
+- Manejar múltiples sockets listening (varios puertos)
+- Buffer management para lectura/escritura
+
+### Herramientas y lenguajes
+- **C++98**: Clases `Socket`, `ConnectionManager`, `EventLoop`
+- **System calls**: `socket()`, `bind()`, `listen()`, `accept()`, `poll()`/`select()`
+- **Bash**: Scripts para hacer pruebas con `telnet`, `curl`, `siege` (stress testing)
+- Posible uso de `nc` (netcat) para debugging
+
+### Tiempo estimado
+- **Estudio inicial**: 6-8 horas (entender sockets, multiplexing, ejemplos)
+- **Implementación básica**: 14-18 horas (sockets + poll básico)
+- **Refinamiento**: 6-8 horas (timeouts, edge cases, múltiples puertos)
+- **Total**: 26-34 horas (~4-5 jornadas completas)
+
+---
+
+## **Persona 3: HTTP y Respuestas**
+
+### Trabajo a realizar
+- Parser de HTTP requests (método, URI, versión, headers, body)
+- Validar requests según RFC 7230/7231
+- Implementar GET (servir archivos estáticos, directory listing)
+- Implementar POST (recibir datos, guardar uploads)
+- Implementar DELETE
+- Generar responses HTTP correctas (status line, headers, body)
+- Crear páginas de error HTML (404, 500, 405, etc.)
+- MIME types (Content-Type para .html, .jpg, .css, etc.)
+
+### Herramientas y lenguajes
+- **C++98**: Clases `HTTPRequest`, `HTTPResponse`, `RequestParser`
+- **Bash/Python**: Scripts para generar requests de prueba
+- **HTML/CSS**: Páginas de error básicas (muy simple)
+- **Herramientas de testing**: `curl`, Postman, navegador web
+
+### Tiempo estimado
+- **Estudio inicial**: 5-7 horas (RFC HTTP, estructura de requests/responses)
+- **Implementación parser**: 10-14 horas (parsear requests complejos)
+- **Implementación responses**: 8-12 horas (GET, POST, DELETE)
+- **Error handling y MIME**: 4-6 horas
+- **Total**: 27-39 horas (~4-6 jornadas completas)
+
+---
+
+## **Calendario recomendado**
+
+### Semana 1-2: Trabajo individual
+Cada persona desarrolla su módulo de forma independiente con interfaces claras definidas desde el inicio.
+
+### Semana 3: Integración
+- Juntar los 3 módulos
+- Debugging conjunto
+- Primeras pruebas end-to-end
+
+### Semana 4: CGI y features avanzadas
+- Implementar CGI (todos juntos, requiere conocer los 3 módulos)
+- Chunked transfer encoding
+- Optimizaciones
+
+### Total proyecto: **3-4 semanas** (~80-120 horas por persona)
+
+---
+
+## Interfaces clave a definir desde el inicio
+
+```cpp
+// Persona 2 entrega a Persona 1
+ServerConfig getServerConfig(int port);
+
+// Persona 1 entrega a Persona 3
+std::string getRawRequest(int client_fd);
+
+// Persona 3 entrega a Persona 1
+std::string getHTTPResponse(HTTPRequest req, ServerConfig config);
+```
+
+----------------------------------------------------------------------
+
+# Análisis de requisitos por persona
+
+## **Persona 2: ¿Es viable sin C++ avanzado?**
+
+### Respuesta corta: **SÍ, pero con matices**
+
+### C++ necesario para esta tarea:
+- **Clases básicas**: constructores, atributos, métodos (nivel CPP00-CPP02)
+- **Contenedores STL**: `std::vector`, `std::map`, `std::string` ← **Aquí está el problema**
+- **Lectura de archivos**: `ifstream`, parsing de strings
+- **NO necesita**: herencia compleja, templates avanzados, operadores sobrecargados
+
+### ¿Es crítico haber hecho los contenedores?
+
+**Parcialmente crítico**. Esta persona necesita:
+- Usar `std::vector<ServerConfig>` para múltiples servidores
+- Usar `std::map<std::string, std::string>` para almacenar rutas o directivas
+- Entender iteradores básicos
+
+**Alternativa si no ha hecho contenedores:**
+- Puede usar arrays estáticos con límites fijos (menos flexible pero funciona)
+- Puede usar listas enlazadas propias (más trabajo, pero aprende)
+- **Recomendación**: Que estudie `std::vector` y `std::map` en paralelo (2-3 días de estudio intensivo son suficientes para el uso básico)
+
+### Conclusión
+Si esta persona tiene CPP00-CPP04 completados, **puede hacerlo con 3-5 días extra de estudio de STL**. Si solo tiene CPP00-CPP02, **probablemente no sea la mejor asignación**.
+
+---
+
+## **Persona 3: ¿Necesita Bash/Python/HTML/CSS/curl/Postman?**
+
+### Respuesta corta: **NO son críticos, pero ayudan mucho**
+
+### Desglose de herramientas:
+
+#### **HTML/CSS** ❌ NO crítico
+- Solo necesita crear 3-4 páginas de error básicas:
+```html
+<html><body><h1>404 Not Found</h1></body></html>
+```
+- Puede copiar templates o que otro compañero las haga en 30 minutos
+- **Alternativa**: Usar páginas de error en texto plano
+
+#### **Bash/Python** ⚠️ Útil pero no esencial
+- Se usan para crear scripts de testing automático
+- **Alternativa**: Usar `curl` manualmente o que Persona 1 haga los scripts
+- Si no sabe: puede aprender lo básico en 2-3 horas
+
+#### **curl** ✅ IMPORTANTE
+- Es la herramienta principal para testear el servidor
+- **Necesita saber**: 
+```bash
+curl http://localhost:8080/index.html
+curl -X POST -d "data=test" http://localhost:8080/upload
+curl -X DELETE http://localhost:8080/file.txt
+```
+- Si no lo conoce: 1-2 horas de estudio son suficientes
+- **Alternativa temporal**: Usar navegador web para GET
+
+#### **Postman** ❌ NO necesario
+- Es útil pero no indispensable
+- curl hace lo mismo
+- **Solo útil si** a la persona le incomoda la terminal
+
+### Conclusión
+Esta persona necesita:
+- **Imprescindible**: Conocimiento sólido de C++ (parsear strings, clases)
+- **Muy recomendable**: curl básico (2 horas de aprendizaje)
+- **Nice to have**: Bash para scripts de testing
+- **No necesario**: HTML/CSS, Postman
+
+---
+
+## **Recomendación final de asignación**
+
+### Mejor fit por perfil:
+
+| Persona | Mejor para | Requisitos |
+|---------|------------|------------|
+| **Más junior en C++** | Persona 1 (Sockets) | Código más procedimental, menos OOP complejo | --> Raúl
+| **Intermedio en C++** | Persona 2 (Config) | Necesita STL, pero es la tarea más "autocontenida" | --> Pau
+| **Más avanzado en C++** | Persona 3 (HTTP) | Parsing complejo, muchos edge cases, RFC | --> Sayer
+
+### Si Persona 2 no tiene contenedores:
+
+**Opción A**: Cambiar asignaciones
+- Persona más avanzada → Config (termina rápido, puede ayudar)
+- Persona junior → Sockets (con supervisión)
+
+**Opción B**: Mantener asignación + plan de estudio
+- Días 1-3: Estudiar `std::vector` y `std::map` (tutoriales + ejercicios)
+- Días 4-15: Implementar config parser
+- Ventaja: Aprende STL en contexto real

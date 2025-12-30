@@ -1,0 +1,233 @@
+Plan de Proyecto: webserv C++98
+
+
+Descripción:
+Webserv es un servidor HTTP básico en C++98. Debes implementar tu propio servidor web capaz de:
+- Servir páginas estáticas
+- Manejar métodos GET, POST, DELETE
+- Ejecutar CGI (principalmente para scripts PHP o Python)
+- Gestionar múltiples conexiones simultáneas (I/O multiplexing con `poll`, `select` o `epoll`)
+- Parsear archivos de configuración (tipo Nginx)
+- Manejar timeouts y errores HTTP
+En webserv, el "backend" y el "servidor" son básicamente lo mismo: todo es C++ manejando sockets y HTTP. El "frontend" es mínimo (solo HTML/CSS de prueba).
+
+Objetivo: Crear un servidor HTTP propio, no bloqueante, compatible con HTTP/1.1 y CGI.
+Restricciones: C++98 estricto, sin librerías externas (Boost, etc.), gestión de memoria manual.
+
+
+1. Arquitectura Técnica (Lo que hay que programar)
+No dividiremos el trabajo en Front/Back. Dividiremos el servidor en 3 módulos lógicos para trabajar en paralelo:
+● Redes (Sockets & I/O): Uso de socket, bind, listen. Clave: Multiplexación I/O no bloqueante con poll() (o epoll/kqueue). Un solo hilo para todo.
+● Protocolo (HTTP): Lectura de RFCs. Parseo de texto crudo (GET /index.html...) y gestión de métodos (GET, POST, DELETE) y errores.
+● CGI (Ejecución dinámica): Uso de fork, execve y pipe para ejecutar scripts (.php, .py) y devolver su salida.
+
+
+2. División recomendada. Reparto de Roles (Equipo de 3, 3 partes paralelas). 
+
+Para aprender todos de todo, el diseño inicial (.hpp) lo hacemos juntos. Luego nos separamos:
+
+Persona 1: El Core (Motor, Sockets y Conexiones).
+● Misión: Mantener el servidor vivo y aceptando miles de conexiones sin bloquearse.
+● Tareas: Configurar el socket, gestionar el bucle infinito de poll(), detectar nuevos clientes y manejar buffers de lectura/escritura.
+● Reto: Gestionar que la lectura no sea bloqueante (manejar datos parciales).
+- Setup de sockets (listening sockets)
+- Implementación de multiplexing (`poll`/`select`/`epoll`)
+- Gestión de conexiones (accept, read, write)
+- Timeouts y cierre de conexiones
+- **Entregable**: Servidor que acepta conexiones y lee datos raw
+
+Persona 2: El Parser (Traductor HTTP). Parsing y Configuración.
+● Misión: Dar sentido a los bytes que llegan.
+● Tareas: Recibir texto crudo y convertirlo en una clase Request estructurada. Validar cabeceras y preparar la clase Response.
+● Reto: Leer los RFCs, manejar chunked transfer y validar peticiones HTTP 1.1 correctamente.
+- Parser del archivo de configuración
+- Estructura de datos para almacenar la config (servidores virtuales, rutas, límites)
+- Validación de la configuración
+- **Entregable**: Sistema que lee config y crea estructuras listas para usar
+
+Persona 3: La Lógica y Router (Gestor de Recursos, HTTP y Respuestas)
+● Misión: Decidir qué hacer con la petición (servir archivo, borrarlo o ejecutar script).
+● Tareas: Leer archivo de configuración (puertos, rutas). Implementar la lógica de rutas y el sistema CGI (la parte más compleja de sistemas: pipes y forks).
+● Reto: Conectar la entrada/salida de los scripts CGI sin crear zombies ni bloqueos.
+- Parser de requests HTTP (método, headers, body)
+- Generación de responses HTTP (status codes, headers, body)
+- Manejo de métodos (GET para archivos estáticos, POST, DELETE)
+- Páginas de error
+- **Entregable**: Funciones que convierten requests en responses
+
+
+
+3. Estrategia de Trabajo: "Desarrollo Aislado"
+Para no bloquearnos unos a otros, trabajaremos con Mocks (simulaciones) hasta la integración final:
+1. Reunión CERO (CRÍTICA): Definir juntos los archivos .hpp (Clases Request, Response, Config). Es el contrato que todos debemos respetar.
+2. Parser (Solo): Crea un main de pruebas con strings de texto inventados para probar su parseo. No necesita red.
+3. Lógica (Solo): Crea un main donde se inventa objetos Request ya limpios para probar si borra archivos o ejecuta el CGI.
+4. Core (Solo): Hace que el servidor responda "HOLA MUNDO" a todo, para probar que aguanta 1000 conexiones simultáneas (stress test con telnet o siege).
+
+
+4. Cronograma "Navideño" (Estimación: 6-8 Semanas)
+Fase 1: Navidad y Año Nuevo (Diseño y Lectura)
+● Actividad: Poca carga de código. Leer RFCs, entender poll y execve.
+● Meta: Tener definidos los .hpp antes de enero. Si no tenemos las clases definidas, no podremos programar por separado.
+// Persona 2 entrega a Persona 1
+ServerConfig getServerConfig(int port);
+// Persona 1 entrega a Persona 3
+std::string getRawRequest(int client_fd);
+// Persona 3 entrega a Persona 1
+std::string getHTTPResponse(HTTPRequest req, ServerConfig config);
+
+Fase 2: Enero - Semanas 3 a 5 (Implementación Dura)
+● Vuelta a la rutina. Cada uno implementa su módulo aislado siguiendo la estrategia de Mocks.
+
+Fase 3: Febrero - Semanas 6 y 7 (Integración y CGI)
+● Unimos las partes. El Core pasa datos al Parser, el Parser al Router.
+● Punto crítico: Debuguear el CGI y los Segfaults al juntar todo.
+
+Fase 4:
+-integráis las 3 partes:
+- Config → inicializa los sockets
+- Sockets → reciben datos y los pasan al parser HTTP
+- HTTP → genera responses que los sockets envían
+Luego implementáis juntos CGI y features avanzadas.
+CGI y features avanzadas
+- Implementar CGI (todos juntos, requiere conocer los 3 módulos)
+- Chunked transfer encoding
+- Optimizaciones
+
+Fase 5: Semana 8 (Pulido)
+● Tests de fugas de memoria (Leaks/Valgrind) y cumplimiento de C++98.
+
+
+---------------------------------------------------
+
+
+# Desglose detallado por persona
+
+## **Persona 1: Sockets y Conexiones**
+
+### Trabajo a realizar
+- Crear sockets TCP en modo non-blocking
+- Implementar multiplexing (elegir entre `poll`, `select` o `epoll`)
+- Gestionar el ciclo: accept → read → write → close
+- Implementar timeouts (detectar conexiones inactivas)
+- Manejar múltiples sockets listening (varios puertos)
+- Buffer management para lectura/escritura
+
+### Herramientas y lenguajes
+- **C++98**: Clases `Socket`, `ConnectionManager`, `EventLoop`
+- **System calls**: `socket()`, `bind()`, `listen()`, `accept()`, `poll()`/`select()`
+- **Bash**: Scripts para hacer pruebas con `telnet`, `curl`, `siege` (stress testing)
+- Posible uso de `nc` (netcat) para debugging
+
+### Tiempo estimado
+- **Estudio inicial**: 6-8 horas (entender sockets, multiplexing, ejemplos)
+- **Implementación básica**: 14-18 horas (sockets + poll básico)
+- **Refinamiento**: 6-8 horas (timeouts, edge cases, múltiples puertos)
+- **Total**: 26-34 horas (~4-5 jornadas completas)
+---
+
+## **Persona 2: Parsing y Configuración**
+
+### Trabajo a realizar
+- Diseñar la estructura del archivo de configuración (inspirado en Nginx)
+- Implementar un lexer/parser que lea el archivo línea a línea
+- Crear clases C++ para almacenar: servidores virtuales, puertos, rutas, límites de body, páginas de error, configuración CGI
+- Validar que no haya duplicados, puertos inválidos, rutas inexistentes
+- Crear sistema de logging básico para debug
+
+### Herramientas y lenguajes
+- **C++98**: Todo el parsing (clases `ConfigParser`, `ServerConfig`, `LocationConfig`)
+- **Bash**: Scripts para testear diferentes configs válidas/inválidas
+- Posible uso de mapas/vectores STL para almacenar datos
+
+### Tiempo estimado
+- **Estudio inicial**: 4-6 horas (entender formato Nginx, diseñar estructura)
+- **Implementación**: 12-16 horas (lexer, parser, validación)
+- **Testing**: 4-6 horas (casos edge, configs complejas)
+- **Total**: 20-28 horas (~3-4 jornadas completas)
+---
+### C++ necesario para esta tarea:
+- **Clases básicas**: constructores, atributos, métodos (nivel CPP00-CPP02)
+- **Contenedores STL**: `std::vector`, `std::map`, `std::string` ← **Aquí está el problema**
+- **Lectura de archivos**: `ifstream`, parsing de strings
+- **NO necesita**: herencia compleja, templates avanzados, operadores sobrecargados
+- Usar `std::vector<ServerConfig>` para múltiples servidores
+- Usar `std::map<std::string, std::string>` para almacenar rutas o directivas
+- Entender iteradores básicos
+- Puede usar arrays estáticos con límites fijos (menos flexible pero funciona)
+- Puede usar listas enlazadas propias (más trabajo, pero aprende)
+---
+
+## **Persona 3: HTTP y Respuestas**
+
+### Trabajo a realizar
+- Parser de HTTP requests (método, URI, versión, headers, body)
+- Validar requests según RFC 7230/7231
+- Implementar GET (servir archivos estáticos, directory listing)
+- Implementar POST (recibir datos, guardar uploads)
+- Implementar DELETE
+- Generar responses HTTP correctas (status line, headers, body)
+- Crear páginas de error HTML (404, 500, 405, etc.)
+- MIME types (Content-Type para .html, .jpg, .css, etc.)
+
+### Herramientas y lenguajes
+- **C++98**: Clases `HTTPRequest`, `HTTPResponse`, `RequestParser`
+- **Bash/Python**: Scripts para generar requests de prueba
+- **HTML/CSS**: Páginas de error básicas (muy simple)
+- **Herramientas de testing**: `curl`, Postman, navegador web
+
+### Tiempo estimado
+- **Estudio inicial**: 5-7 horas (RFC HTTP, estructura de requests/responses)
+- **Implementación parser**: 10-14 horas (parsear requests complejos)
+- **Implementación responses**: 8-12 horas (GET, POST, DELETE)
+- **Error handling y MIME**: 4-6 horas
+- **Total**: 27-39 horas (~4-6 jornadas completas)
+---
+
+### Desglose de herramientas:
+**HTML/CSS** ❌ NO crítico
+- Solo necesita crear 3-4 páginas de error básicas:
+<html><body><h1>404 Not Found</h1></body></html>
+- Puede copiar templates o que otro compañero las haga en 30 minutos
+- **Alternativa**: Usar páginas de error en texto plano
+
+#### **Bash/Python
+- Se usan para crear scripts de testing automático
+- **Alternativa**: Usar `curl` manualmente o que Persona 1 haga los scripts
+- Si no sabe: puede aprender lo básico en 2-3 horas
+
+#### **curl
+- Es la herramienta principal para testear el servidor
+- **Necesita saber**: 
+```bash
+curl http://localhost:8080/index.html
+curl -X POST -d "data=test" http://localhost:8080/upload
+curl -X DELETE http://localhost:8080/file.txt
+```
+
+#### **Postman
+- Es útil pero no indispensable
+- curl hace lo mismo
+- **Solo útil si** a la persona le incomoda la terminal
+
+### Conclusión
+Esta persona necesita:
+- **Imprescindible**: Conocimiento sólido de C++ (parsear strings, clases)
+- **Muy recomendable**: curl básico (2 horas de aprendizaje)
+- **Nice to have**: Bash para scripts de testing
+- **No necesario**: HTML/CSS, Postman
+---
+
+
+-----------------------------------------------------------------------------------------------
+Resumen para sobrevivir
+1. No programar sin diseño: Definamos las clases primero.
+2. No bloquearse esperando al otro: Usad datos falsos para avanzar en vuestra parte.
+3. El Frontend: Lo hacemos los tres en una tarde (HTML básico y feo), es lo de menos.
+4. Disfrutad las fiestas: Aprovechad ahora para leer documentación. El código duro empieza el 7 de enero
+
+
+-----------------------------------------------------------------------------------------------
+### **Persona 1: El Core (Motor, Sockets y Conexiones). --> Raúl
+### **Persona 2: El Parser (Traductor HTTP). Parsing y Configuración. --> Pau
+### **Persona 3: La Lógica y Router (Gestor de Recursos, HTTP y Respuestas) --> Sayer
